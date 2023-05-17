@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #define PORT 8080
+#include "fileread."
 
 int main(int argc, char const* argv[]){
 	int status, valread, client_fd;
