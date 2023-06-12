@@ -6,7 +6,6 @@
 
 #include <sys/socket.h>
 #include <unistd.h>
-#define PORT 8080
 
 char* fileLength(char *file_dir, long* bytes_read);
 void * findFile(int cli_socket, char *method_http_request, char *file_path_request,char *file_extension_request);

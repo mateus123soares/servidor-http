@@ -1,7 +1,8 @@
 ALL:
 	gcc -c server.c -g 
 	gcc -c client.c -g
-	gcc server.o client.o -o  exec -lpthread
+	gcc -c init-server.c -g
+	gcc server.o client.o init-server.o -o  exec -lpthread
 	./exec
 
 clean: 
@@ -9,8 +10,9 @@ clean:
 
 server:
 	gcc -c server.c -g 
-	gcc server.o -o  exec-server -lpthread
-	./exec-server
+	gcc -c init-server.c -g
+	gcc server.o init-server.o -o exec -lpthread
+	./exec
 
 client:
 	gcc -c client.c -g 
