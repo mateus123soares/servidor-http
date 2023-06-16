@@ -9,8 +9,8 @@ clean:
 	rm exec
 
 server:
-	gcc -c server.c -g 
 	gcc -c init-server.c -g
+	gcc -c server.c -g 
 	gcc server.o init-server.o -o exec -lpthread
 	./exec
 

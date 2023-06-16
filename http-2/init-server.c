@@ -5,7 +5,8 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
-#include "http-server.h"
+#define MAX_CONNECTIONS 5
+#define HTTP_PORT 50001
 
 int initServer(struct sockaddr_in caddr, struct sockaddr_in saddr){
     
