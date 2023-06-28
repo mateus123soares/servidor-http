@@ -22,7 +22,7 @@ int main(int argc, char const* argv[]){
 	}
 
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(PORT);
+	serv_addr.sin_port = htons(HTTP_PORT);
 
 	// Convert IPv4 and IPv6 addresses from text to binary
 	// form

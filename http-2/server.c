@@ -11,17 +11,19 @@
 #include <stdbool.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <semaphore.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #define GetCurrentDir getcwd
 
 #include "http-server.h"
 
-bool checkIPExistence(const char* ip);
+int checkIPExistence(const char* ip);
 void saveIP(const char* ip);
 char* GetFileSize(char *file_dir, long* bytes_read);
 void *RequestFileExtensionParse(void* client_socket);
 void *RequestFindFile(int cli_socket, char *method_http_request, char *file_path_http_request,char *file_extension_request);
+double calculateTransferRate(unsigned long long bytes, unsigned long long microseconds);
 
 int main(int argc, char const* argv[]) {
     caddr;
@@ -29,19 +31,27 @@ int main(int argc, char const* argv[]) {
     saddr.sin_addr.s_addr = htonl(INADDR_ANY);
     saddr.sin_port = htons(HTTP_PORT);
 
+    sem_init(&semaforo, 0, 1);
     int csize  = sizeof caddr;
-
+    int max_vazao_server = atoi(argv[1]);
+    printf("Vazao Maxima do Server: %d \n",max_vazao_server);
     int server_connection = initServer(caddr,saddr);
     
     while (1) {
-        int client_socket_connection;
-        pthread_t thread_id;
-        
-        // Aceitar uma conexão de cliente
-        client_socket_connection = accept(server_connection, (struct sockaddr *)&caddr, &csize);
-        printf("Cliente conectado: %d",client_socket_connection);
-        // Criar uma nova thread para atender o cliente
-        pthread_create(&thread_id, NULL, RequestFileExtensionParse, (void *)&client_socket_connection);
+        if (total_taxa_server < max_vazao_server){
+            int client_socket_connection;
+            pthread_t thread_id;
+
+            // Aceitar uma conexão de cliente
+            client_socket_connection = accept(server_connection, (struct sockaddr *)&caddr, &csize);
+            printf("Cliente conectado: %d",client_socket_connection);
+            // Criar uma nova thread para atender o cliente
+            pthread_create(&thread_id, NULL, RequestFileExtensionParse, (void *)&client_socket_connection);
+        }
+        else {
+             printf("O servidor atingiu o maximo de vazão");
+             break;
+        }
     }
     
     // Fechar o socket do servidor
@@ -55,7 +65,6 @@ void *RequestFileExtensionParse(void* client_socket){
     char *method_http_request,*file_path_http_request, *file_extension_request;
 	char buffer[BUFFER_SIZE] = { 0 };
 	read(socket_cli, buffer, BUFFER_SIZE);
-
     // Realizando o parse da requisição realizada do usuário: METODO ARQUIVO EXTENÇÃO 
     method_http_request = strtok(buffer, " \t\n");
 
@@ -99,6 +108,7 @@ void * RequestFindFile(int cli_socket, char *method_http_request, char *file_pat
         int TAXA_MAX=0;
         size_t bytesRead;
         char clientIP[INET_ADDRSTRLEN];
+        int totalBytesWritten;
         inet_ntop(AF_INET, &(caddr.sin_addr), clientIP, INET_ADDRSTRLEN);
         
 	    if(strcmp(file_extension_request,"html") == 0 ){
@@ -112,25 +122,38 @@ void * RequestFindFile(int cli_socket, char *method_http_request, char *file_pat
             printf("RTT de envio do HTML: %fs \n",rtt_html);      
         }else{
             printf("Endereço IP do cliente: %s\n", clientIP);
-            if (!checkIPExistence(clientIP)) {
-                saveIP(clientIP);
-                TAXA_MAX=1000;
-            } else {
-                TAXA_MAX=84000;
-            }
+            // Aguarda permissão para acessar a variável "taxa"
+            sem_wait(&semaforo);
+            TAXA_MAX=checkIPExistence(clientIP);
+            total_taxa_server = total_taxa_server + 1000;
+            // Libera o semáforo para permitir que outra thread acesse a variável
+            sem_post(&semaforo);
+            printf("Taxa: %d \n",total_taxa_server);
             char max_taxa[TAXA_MAX];
             sprintf(response, "HTTP/1.1 200 OK\r\nContent-Type: image/%s\r\nContent-Length: %ld\r\n\r\n", file_extension_request,bytes_read);
             write(cli_socket, response, strlen(response));
             gettimeofday(&timeval1, NULL);
-            while ((bytesRead = fread(max_taxa, 1, sizeof(max_taxa), fp)) > 0) {
-                write(cli_socket, max_taxa, bytesRead);
-            }
+                while ((bytesRead = fread(max_taxa, 1, sizeof(max_taxa), fp)) > 0) {
+                    write(cli_socket, max_taxa, bytesRead);
+                    totalBytesWritten += bytesRead;
+                }
             gettimeofday(&timeval2, NULL);
+
+            sem_wait(&semaforo);
+            // Aguarda permissão para acessar a variável "taxa"
+            total_taxa_server = TAXA_MAX - total_taxa_server;
+            // Libera o semáforo para permitir que outra thread acesse a variável
+            sem_post(&semaforo);
+            printf("Taxa: %d \n",total_taxa_server);
+
             close(cli_socket);  
-            double rtt_img = (double) (timeval2.tv_usec - timeval1.tv_usec) / 1000000 + (double) (timeval2.tv_sec - timeval1.tv_sec);
-            printf("Atraso fim-a-fim: %fs\n", rtt_img);
-            double largura_de_banda =  bytes_read / rtt_img;
-            printf("Largura da banda: %f kbps \n",largura_de_banda); 
+            double rtt_img = (timeval2.tv_sec - timeval1.tv_sec) * 1000000 + (timeval2.tv_usec - timeval1.tv_usec);
+            printf("Total Bytes send: %d \n",totalBytesWritten);
+            double largura_de_banda =  calculateTransferRate(totalBytesWritten,rtt_img);
+            
+
+            printf("Atraso fim-a-fim: %.2f ms\n", rtt_img);
+            printf("Largura da banda: %.2f kbps \n",largura_de_banda); 
             printf("Taxa Utilizada: %ld\n", sizeof(max_taxa));
         }
     }
@@ -158,23 +181,24 @@ char* GetFileSize(char *file_dir, long* bytes_read){
     return buffer_file;
 }
 
-bool checkIPExistence(const char* ip) {
+int checkIPExistence(const char* ip) {
+    int taxa;
+    char ipFromFile[16];
     FILE* file = fopen(FILENAME, "r");
     if (file == NULL) {
         return false;
     }
 
     char line[MAX_IP_LENGTH];
-    while (fgets(line, sizeof(line), file)) {
-        line[strcspn(line, "\n")] = '\0';  // Remover o caractere '\n' no final da linha
-        if (strcmp(line, ip) == 0) {
-            fclose(file);
-            return true;
+    while (fgets(line, sizeof(line), file) != NULL) {
+        sscanf(line, "%[^,],%d", ipFromFile, &taxa);
+        if (strcmp(ipFromFile, ip) == 0) {
+            return taxa;
         }
     }
 
     fclose(file);
-    return false;
+    return 10000;
 }
 
 void saveIP(const char* ip) {
@@ -186,4 +210,9 @@ void saveIP(const char* ip) {
 
     fprintf(file, "%s\n", ip);
     fclose(file);
+}
+
+double calculateTransferRate(unsigned long long bytes, unsigned long long microseconds) {
+    double rate = (bytes * 8) / (microseconds / 1000000.0); // Calcula a taxa de transferência em kbps
+    return rate;
 }

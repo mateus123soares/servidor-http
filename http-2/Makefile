@@ -12,7 +12,7 @@ server:
 	gcc -c server.c -g 
 	gcc -c init-server.c -g
 	gcc server.o init-server.o -o exec -lpthread
-	./exec
+	./exec 168000
 
 client:
 	gcc -c client.c -g 
