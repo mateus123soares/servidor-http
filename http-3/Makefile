@@ -11,7 +11,7 @@ clean:
 server:
 	gcc -c init-server.c -g
 	gcc -c server.c -g 
-	gcc server.o init-server.o -o http-server -lpthread
+	gcc server.o init-server.o -o exec -lpthread
 
 client:
 	gcc -c client.c -g 

@@ -20,10 +20,11 @@
 
 int checkIPExistence(const char* ip);
 void saveIP(const char* ip);
-char* GetFileSize(char *file_dir, long* bytes_read);
+void GetFileSize(char *file_dir, long* bytes_read);
 void *RequestFileExtensionParse(void* client_socket);
 void *RequestFindFile(int cli_socket, char *method_http_request, char *file_path_http_request,char *file_extension_request);
 double calculateTransferRate(unsigned long long bytes, unsigned long long microseconds);
+void read_file_by_parts(const char* filename, unsigned int part_size_kb, unsigned int max_throughput_kb, int socket);
 
 int main(int argc, char const* argv[]) {
     caddr;
@@ -53,6 +54,8 @@ int main(int argc, char const* argv[]) {
             client_socket_connection = accept(server_connection, (struct sockaddr *)&caddr, &csize);
             // Criar uma nova thread para atender o cliente
             pthread_create(&thread_id, NULL, RequestFileExtensionParse, (void *)&client_socket_connection);
+            printf("EXECUTEI");
+            //pthread_exit(&thread_id);
          
     }
     
@@ -66,8 +69,15 @@ void *RequestFileExtensionParse(void* client_socket){
     int socket_cli = *((int*)client_socket);
     char *method_http_request,*file_path_http_request, *file_extension_request;
 	char buffer[BUFFER_SIZE] = { 0 };
-	read(socket_cli, buffer, BUFFER_SIZE);
-    // Realizando o parse da requisição realizada do usuário: METODO ARQUIVO EXTENÇÃO 
+
+
+    // Lê a requisição do cliente
+    memset(buffer, 0, BUFFER_SIZE);
+    if (read(socket_cli, buffer, BUFFER_SIZE - 1) < 0) {
+        perror("Erro ao ler a requisição do cliente");
+        exit(1);
+    }
+
     method_http_request = strtok(buffer, " \t\n");
     file_path_http_request = strtok(NULL, " \t");
     if(strcmp(file_path_http_request,"/")!=0){
@@ -87,13 +97,12 @@ void *RequestFileExtensionParse(void* client_socket){
 void * RequestFindFile(int cli_socket, char *method_http_request, char *file_path_http_request,char *file_extension_request) {
     struct timeval  timeval1, timeval2;
     struct timespec req = {0};
-    req.tv_sec = 0; 
     
     char file_dir[FILENAME_MAX],current_dir[FILENAME_MAX];
-    char *buffer;
-    long bytes_read;
     char response[BUFFER_SIZE];
+    long bytes_read;
 
+    req.tv_sec = 0; 
     FILE *fp;
     
     // Obtendo o diretório dos arquivos estaticos html
@@ -105,62 +114,37 @@ void * RequestFindFile(int cli_socket, char *method_http_request, char *file_pat
     strcat(file_dir,file_extension_request);
 
     fp = fopen(file_dir, "r");
+    
     if (fp != NULL) {
-        buffer=GetFileSize(file_dir,&bytes_read);
-        int TAXA_MAX=0;
-        size_t bytesRead;
+
+        GetFileSize(file_dir,&bytes_read);
+        
         char clientIP[INET_ADDRSTRLEN];
-        int totalBytesWritten;
         inet_ntop(AF_INET, &(caddr.sin_addr), clientIP, INET_ADDRSTRLEN);
         
+        int taxa = checkIPExistence(clientIP);
+
 	    if(strcmp(file_extension_request,"html") == 0 ){
-            sprintf(response, "HTTP/1.1 200 OK\r\nContent-Type: text/%s\r\nContent-Length: %ld\r\n\r\n", file_extension_request,bytes_read);
+        
+            sprintf(response, "HTTP/1.1 200 OK\r\nContent-Type: text/%s\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=1000\r\nContent-Length: %ld\r\n\r\n", file_extension_request,bytes_read);
             write(cli_socket, response, strlen(response));
+            
             gettimeofday(&timeval1, NULL);
-            write(cli_socket, buffer, bytes_read);
+            read_file_by_parts(file_dir,1024,taxa,cli_socket);
             gettimeofday(&timeval2, NULL);
+            
             close(cli_socket);  
             double rtt_html = (timeval2.tv_sec - timeval1.tv_sec) * 1000000 + (timeval2.tv_usec - timeval1.tv_usec);
             printf("RTT de envio do HTML: %fms \n",rtt_html);      
+        
         }else{
             printf("Endereço IP do cliente: %s\n", clientIP);
             // Aguarda permissão para acessar a variável "taxa"
-            sem_wait(&semaforo);
-            TAXA_MAX=checkIPExistence(clientIP);
-            total_taxa_server = total_taxa_server + TAXA_MAX;
-            // Libera o semáforo para permitir que outra thread acesse a variável
-            sem_post(&semaforo);
-            while(((max_vazao_server - total_taxa_server)) < 0 ) {
-                printf("Aguardando\n");
-                sleep(1);
-            }
-            printf("Taxa: %d \n",total_taxa_server);
-            char max_taxa[TAXA_MAX];
-            sprintf(response, "HTTP/1.1 200 OK\r\nContent-Type: image/%s\r\nContent-Length: %ld\r\n\r\n", file_extension_request,bytes_read);
+            sprintf(response, "HTTP/1.1 200 OK\r\nContent-Type: image/%s\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5, max=1000\r\nContent-Length: %ld\r\n\r\n", file_extension_request,bytes_read);
             write(cli_socket, response, strlen(response));
-            gettimeofday(&timeval1, NULL);
-                while ((bytesRead = fread(max_taxa, 1, sizeof(max_taxa), fp)) > 0) {
-                    write(cli_socket, max_taxa, bytesRead);
-                    totalBytesWritten += bytesRead;
-                }
-            gettimeofday(&timeval2, NULL);
+            read_file_by_parts(file_dir,1024,taxa,cli_socket);
+            close(cli_socket);
 
-            sem_wait(&semaforo);
-            // Aguarda permissão para acessar a variável "taxa"
-            total_taxa_server = TAXA_MAX - total_taxa_server;
-            // Libera o semáforo para permitir que outra thread acesse a variável
-            sem_post(&semaforo);
-            printf("Taxa: %d \n",total_taxa_server);
-
-            close(cli_socket);  
-            double rtt_html = (timeval2.tv_sec - timeval1.tv_sec) * 1000000 + (timeval2.tv_usec - timeval1.tv_usec);
-            printf("Total Bytes send: %d \n",totalBytesWritten);
-            double largura_de_banda =  calculateTransferRate(totalBytesWritten,rtt_html);
-            
-
-            printf("Atraso fim-a-fim: %.2f ms\n", rtt_html);
-            printf("Largura da banda: %.2f kbps \n",largura_de_banda); 
-            printf("Taxa Utilizada: %ld\n", sizeof(max_taxa));
         }
     }
     else {// se nao encontrar arquivo entra aqui{
@@ -170,22 +154,16 @@ void * RequestFindFile(int cli_socket, char *method_http_request, char *file_pat
     fclose(fp);
 }
 
-char* GetFileSize(char *file_dir, long* bytes_read){
+void GetFileSize(char *file_dir, long* bytes_read){
     FILE *fp;
     char *buffer_file;
 
     fp = fopen(file_dir, "r");
           
     fseek(fp, 0, SEEK_END);
-    long bytes_read_num = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    
-    buffer_file = (char *)malloc(bytes_read_num * sizeof(char));
-    *bytes_read=bytes_read_num;
-    
-    fread(buffer_file, bytes_read_num, 1, fp); // lê o buffer
+    *bytes_read = ftell(fp);
+
     fclose(fp);
-    return buffer_file;
 }
 
 int checkIPExistence(const char* ip) {
@@ -222,4 +200,48 @@ void saveIP(const char* ip) {
 double calculateTransferRate(unsigned long long bytes, unsigned long long microseconds) {
     double rate = (bytes * 8) / (microseconds / 1000000.0); // Calcula a taxa de transferência em kbps
     return rate;
+}
+
+void read_file_by_parts(const char* filename, unsigned int part_size_kb, unsigned int max_throughput_kb, int socket) {
+    FILE* file = fopen(filename, "rb");
+    if (file == NULL) {
+        printf("Erro ao abrir o arquivo.\n");
+        return;
+    }
+
+    // Calcula o tamanho máximo da parte com base na taxa de transferência
+    unsigned int part_size_bytes = part_size_kb * 1024;
+    unsigned int max_throughput_bytes = max_throughput_kb * 1024;
+    unsigned int max_part_size = part_size_bytes;
+    if (max_part_size > max_throughput_bytes) {
+        max_part_size = max_throughput_bytes;
+    }
+
+    unsigned char buffer[BUFFER_SIZE];
+    size_t bytes_read = 0;
+    size_t total_bytes_read = 0;
+
+    struct timeval start_time, end_time;
+    
+    gettimeofday(&start_time, NULL);  // Inicia a contagem de tempo
+
+    while ((bytes_read = fread(buffer, sizeof(char), 10, file)) > 0) {
+        total_bytes_read += bytes_read;
+        write(socket, buffer, bytes_read);
+        // Verifica se atingiu o tamanho máximo da parte
+        if (total_bytes_read >= max_part_size) {
+            // Aguarda o tempo necessário para respeitar a taxa de transferência
+            usleep((total_bytes_read * 1000000) / max_throughput_bytes);
+            total_bytes_read = 0;  // Reinicia o contador
+        }
+    }
+
+    gettimeofday(&end_time, NULL);  // Finaliza a contagem de tempo
+
+    fclose(file);
+
+    double start_seconds = start_time.tv_sec + (start_time.tv_usec / 1000000.0);
+    double end_seconds = end_time.tv_sec + (end_time.tv_usec / 1000000.0);
+    double elapsed_time = end_seconds - start_seconds;
+    printf("Tempo decorrido: %.2f segundos\n", elapsed_time);
 }
