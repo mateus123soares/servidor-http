@@ -10,7 +10,9 @@
 #include <semaphore.h>
 
 struct sockaddr_in caddr, saddr;
-int total_taxa_server,max_vazao_server;
+int total_taxa_server,max_vazao_server,teste;
+int y=0;
+int i=0;
 sem_t semaforo;
 
 int initServer(struct sockaddr_in caddr,struct sockaddr_in saddr);

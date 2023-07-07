@@ -5,6 +5,9 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+
 #define MAX_CONNECTIONS 5
 #define HTTP_PORT 50001
 
@@ -19,6 +22,25 @@ int initServer(struct sockaddr_in caddr, struct sockaddr_in saddr){
     else {
         printf("Socket criado\n");
     };
+
+    // Habilita o keep-alive no socket
+    int enableKeepAlive = 1;
+    if (setsockopt(server, SOL_SOCKET, SO_KEEPALIVE, &enableKeepAlive, sizeof(enableKeepAlive)) < 0) {
+        perror("Erro ao habilitar o keep-alive");
+        exit(EXIT_FAILURE);
+    }
+
+    // Configura os parâmetros de keep-alive
+    int keepIdle = 60; // Tempo de ociosidade em segundos
+    int keepInterval = 5; // Intervalo de sondagem em segundos
+    int keepCount = 3; // Número de falhas antes da desconexão
+
+    if (setsockopt(server, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(keepIdle)) < 0 ||
+        setsockopt(server, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(keepInterval)) < 0 ||
+        setsockopt(server, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(keepCount)) < 0) {
+        perror("Erro ao configurar os parâmetros de keep-alive");
+        exit(EXIT_FAILURE);
+    }
 
     if (bind(server, (struct sockaddr *) &saddr, sizeof saddr) == -1){
         perror("bind failed\n");
